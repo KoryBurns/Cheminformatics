@@ -1,0 +1,150 @@
+"""
+This script will be used to train the ChEMBL dataset with graph convolutional models.
+
+This code was written in Python2
+
+This code is still being edited
+
+"""
+
+from __future__ import division
+from __future__ import unicode_literals
+from __future__ import unicode_literals
+
+import numpy as np
+import tensorflow as tf
+import deepchem as dc
+
+from deepchem.models.tensorgraph.models.graph_models import GraphConvTensorGraph
+
+# Now, we must load the ChEMBL dataset into the program
+
+chembl_tasks, chembl_datasets, transformers = dc.molnet.load_chembl(featurizer='GraphConv')
+train_dataset, valid_dataset, test_dataset = chembl_datasets
+
+model = GraphConvTensorGraph(
+  len(chembl_tasks), batch_size=50, mode='classification')
+model.fit(train_dataset, nb_epoch=10)
+
+# Now we can try to evaluate the performance of the model we've trained
+
+metric = dc.metrics.Metric(
+  dc.metrics.roc_auc_score, np.mean, mode="classification")
+  
+print "Evaluating Model"
+valid_scores = model.evaluate(train_dataset, [metric], transformers)
+print "Validation ROC-AUC Score: %f % valid_scores["mean-roc_auc_score"]
+
+# Now, we will create a TensorGraph that will define the computation that the network performs
+
+from deepchem.models.tensorgraph.tensor_graph import TensorGraph
+
+tg = TensorGraph(use_queue=False)
+
+from deepchem.models.tensorgraph.layers import Feature
+
+""" 
+atom_features has a vector length of 75 for each atom.
+degree_slice is an indexing convenience that makes it easy to locate atoms
+membership determines the membership of atoms in molecules
+deg_adjs is a list that contains adjacency lists grouped by atom degree.
+"""
+
+atom_features = Feature(shape=(none, 75))
+degree_slice = Feature(shape=(None, 2), dtype=tf.int32)
+membership = Feature(shape=(None,), dtype=tf.init32)
+
+deg_adj = []
+for i in range(0, 10 + 1):
+  deg_adj = Feature(shape=(None, i + 1), dtype=tf.int32)
+  deg_adjs.append(deg_adj)
+  
+# Here, we will implement the body of the graph convolutional network
+
+from deepchem.models.tensorgraph.layers import Dense, GraphConv, BatchNorm
+from deepchem.models.tensorgraph.layers import GraphPool, GraphGather
+
+batch_size = 50
+
+gc1 = GraphConv(
+  64,
+  activation_fn=tf.nn.relu
+  in_layers=[atom_features, degree_slice, membership] + deg_adjs)
+  
+batch_norm2 = BatchNorm(in_layers=[gc2])
+gp2 = GraphPool(in_layers=[batch_norm2, degree_slice, membership] + deg_adjs)
+dense = Dense(out_channels=128, activation_fn=tf.nn.relu, in_layers=[gp2])
+batch_norm3 = BatchNorm(in_layers=[dense])
+readout = GraphGather(
+  batch_size=batch_size,
+  activation_fn=tf.nn.tanh
+  in_layers=[batch_norm3, degree_slice, membership] + deg_adjs)
+  
+# In this database, there are 23 different datasets grouped together. It is multitask
+
+from deepchem.models.tensorgraph.layers import Dense, SoftMax \
+    SoftMaxCrossEntropy, WeightedError, Stack
+from deepchem.models.tensorgraph.layers import Label, Weights
+
+cost = []
+labels = []
+for task in range(len(chembl_tasks)):
+    classification = Dense(
+      out_channels=2, activation_fn=None, in_layers=[readout])
+      
+    softmax = SoftMax(in_layers=[classification])
+    tg.add_output(softmax)
+    
+    label - Label(shape=(None, 2))
+    labels.append(label)
+    cost = SoftMaxCrossEntropy(in_layers=[label, classification])
+    costs.append(cost)
+all_cost = Stack(in_layers=costs, axis=1)
+weights = Weights(shape=(None, len(chembl_tasks)))
+loss = WeightedError(in_layers=[all_cost, weights])
+tg.set_loss(loss)
+
+# We have just defined the our graph conv model, now, we need to train it.
+
+from deepchem.metrics import to_one_hot
+from deepchem.feat.mol_graphs import ConvMol
+
+def data_generator(dataset, epochs=10, predict=False, pad_batches=True):
+  for epoch in range(epochs):
+    if not predict:
+      print 'Starting epoch %i' % epoch
+     
+    for ind, (X_b, y_b, w_b, ids_b) in enumerate(
+        dataset.iterbatches(
+            batch_size, pad_batches=pad_batches, deterministic=True)):
+    d = {}
+    for index, label in enumerate(labels):
+      d[label] = to_one_hot(y_b[:, index])
+    d[weights] = w_b
+    multiConvMol = ConvMol.agglomerate_mols(X_b)
+    d[atom_features] = multiConvMol.get_atom_features()
+    d[degree_slice] = multiConvMol.deg_slice
+    d[membership] = multiConvMol.membership
+    for i in range(1, len(multiConvMol.get_deg_adjacency_lists())):
+      d[deg_adjs[i - 1]] = multiConvMol.get_deg_adjacency_lists()[i]
+    yield d
+    
+# Now, we proceed to train the model again
+
+tg.fit_generator(data_generator(train_dataset, epochs=1))
+
+# We can now evaluate the performance of the model
+
+metric = dc.metrics.Metric(
+    dc.metrics.roc_auc_score, np.mean, mode="classification")
+    
+def reshape_y_pred(y_true, y_pred):
+    n_samples = len(y_true)
+    retval = np.stack(y_pred, axis=1)
+    return retval[:n_samples]
+    
+print "Evaluating models"
+train_predictions = tg.predict_on_generator(data_generator(train_dataset, predict=True))
+train_predictions = reshape_y_pred(valid_dataset.y, valid_predictions)
+valid_scores = metric.compute_metric(valid_dataset.y, valid_predictions, valid_dataset.w)
+print "Valid ROC-AUC Score: %f" % valid_scores
